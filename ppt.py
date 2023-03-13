@@ -87,6 +87,8 @@ def BPF(x, fs, fc1, fc2, TBW=20):
         xb  (1d array)       : the band pass filtered signal, spectrum spans fc1 to fc2
     """
     Ntaps = (int((fs/2)/fc1*2*TBW)//2)*2+1
+    if fc1 >= fs/2 or fc2 >= fs/2:
+        print('false cut off frequency! fs={0}, fc1={1}, fc2={2}'.format(fs,fc1,fc2))
     h = firwin(Ntaps,[fc1/(fs/2), fc2/(fs/2)],window = 'hanning',pass_zero=False)
     xb = np.convolve(x,h,'same')
     return xb
@@ -210,8 +212,8 @@ def seg_pitch_tracking(xx, fd, fmin, fmax, v1, v2, x, fs):
             mid = np.ceil(len(piece)/2).astype(int)
             half_1 = x[(v1+start)*MM:(v1+start+mid)*MM]
             half_2 = x[(v1+start+mid)*MM:(v1+end_idx)*MM+1]
-            f0_coarse_1 = coarse_f0_rceps(half_1, fs)
-            f0_coarse_2 = coarse_f0_rceps(half_2, fs)
+            f0_coarse_1 = coarse_f0_rceps(half_1, fs, fmin, fmax)
+            f0_coarse_2 = coarse_f0_rceps(half_2, fs, fmin, fmax)
             minor = min(f0_coarse_1,f0_coarse_2)
             delta = abs(f0_coarse_1-f0_coarse_2)
         # if length(piece) >= 60 && abs(f0_coarse_1-f0_coarse_2) > 50 && min(f0_coarse_1,f0_coarse_2) > 100
@@ -228,7 +230,7 @@ def seg_pitch_tracking(xx, fd, fmin, fmax, v1, v2, x, fs):
             f0[start:end_idx+1] = np.hstack([f0_raw_1[add_len_head:add_len_head+mid],f0_raw_2[add_len_head:add_len_head+len(piece)-mid]])
         else:
             ori_piece = x[(v1+start)*MM:(v1+end_idx)*MM+1]
-            f0_coarse = coarse_f0_rceps(ori_piece, fs)
+            f0_coarse = coarse_f0_rceps(ori_piece, fs, fmin, fmax)
             # fprintf('(%d, %d), %f, in x from %d to %d\n', i, n, f0_coarse, (v1+start-2)*MM+1, (v1+end_idx-2)*MM+1);
             add_zero_len = int(0.320*fd)-len(piece_added)
             f0_raw = piece_pitch_tracking(np.hstack([piece_added,np.zeros(add_zero_len)]),fd,f0_coarse,add_zero_len,fmin,fmax)
@@ -236,12 +238,14 @@ def seg_pitch_tracking(xx, fd, fmin, fmax, v1, v2, x, fs):
             f0[start:end_idx+1] = f0_raw[add_len_head:add_len_head+len(piece)]
     return f0
  
-def coarse_f0_rceps(x, fs):
+def coarse_f0_rceps(x, fs, fmin, fmax):
     """returns the coarse F0 of a segment x based on spectrum and real cepstrum. 
 
     Args:
         x         (1d array)   : a segment of speech signal
         fs        (float)      : the sampling frequency of x
+        fmin      (float)      : the min analyzed frequency 
+        fmax      (float)      : the max analyzed frequency 
         
     Returns:
         f0_coarse (float)      : the coarse F0 of x 
@@ -295,6 +299,9 @@ def coarse_f0_rceps(x, fs):
         print('gamma_raw is false!')
     else:
         f0_coarse = fs/gamma
+        if f0_coarse >= fmax or f0_coarse <= fmin:
+            f0_coarse = -1
+            print('f0_coarse out of range, false voiced segment!')
     return f0_coarse
 
 def choose_candidate(abs_fft, fs, M_fft, gamma_candidate):
@@ -343,7 +350,7 @@ def piece_pitch_tracking(xx,fd,f0_coarse,add_zero_len,fmin,fmax):
     # check if f0_coarse is valid
     if f0_coarse != -1:
         # pre-filter to keep 0.7*f0_coarse to 1.4*f0_coarse frequency components
-        xx = BPF(xx, fd, fc1=max(0.7*f0_coarse,fmin), fc2=min(1.4*f0_coarse,fmax))
+        xx = BPF(xx, fd, fc1=max(0.7*f0_coarse,fmin), fc2=min(1.4*f0_coarse,fmax,fd/2-1))
         # take the analytic signal of x to avoid interpolation and cross terms
         xz      = hilbert(xx)
         xa      = np.hstack([xz,np.zeros(N)])
